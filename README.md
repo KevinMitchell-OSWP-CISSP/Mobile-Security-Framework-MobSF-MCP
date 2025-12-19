@@ -25,7 +25,7 @@ cp .env.example .env
 npm run build
 npm start
 # or for development
-npm run dev
+MOBSF_API_KEY=your_api_key_here MOBSF_BASE_URL=http://127.0.0.1:8000 npm run dev
 ```
 
 ## Notes
