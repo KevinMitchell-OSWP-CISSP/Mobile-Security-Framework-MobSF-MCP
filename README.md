@@ -31,3 +31,20 @@ npm run dev
 ## Notes
 - Keep this repository **private**; do not commit `.env` or other secrets.
 - `dist/` and `node_modules/` are generated and ignored.
+
+## Using with MCP Clients (Claude/OpenAI)
+- Build and start the MCP server (`npm run build && npm start`), or run via `npm run dev`.
+- Configure your MCP-compatible client (Claude Desktop, Model Context Protocol integrations, etc.) to launch this server process and set env vars `MOBSF_BASE_URL` and `MOBSF_API_KEY`.
+- Tools exposed:
+  - `upload_mobile_app` (file upload)
+  - `scan_mobile_app`
+  - `get_scan_report_json`
+  - `get_scan_report_pdf`
+  - `view_source_code`
+  - `compare_apps`
+  - `get_recent_scans`
+  - `delete_scan`
+  - `get_app_scorecard`
+  - `suppress_finding`
+
+Error handling: The server validates configuration at startup (missing `MOBSF_API_KEY` will error) and returns detailed HTTP errors from MobSF for easier troubleshooting in chat UIs.

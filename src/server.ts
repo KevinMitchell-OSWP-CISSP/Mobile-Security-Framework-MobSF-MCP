@@ -1,13 +1,34 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import FormData from 'form-data';
 import fs from 'fs-extra';
 import path from 'path';
+import { z } from 'zod';
 
-const MOBSF_BASE_URL = process.env.MOBSF_BASE_URL || 'http://127.0.0.1:8000';
-const MOBSF_API_KEY = process.env.MOBSF_API_KEY || '';
+const envSchema = z.object({
+  MOBSF_BASE_URL: z.string().url().default('http://127.0.0.1:8000'),
+  MOBSF_API_KEY: z.string().min(1, 'MOBSF_API_KEY is required')
+});
+
+const env = envSchema.parse({
+  MOBSF_BASE_URL: process.env.MOBSF_BASE_URL,
+  MOBSF_API_KEY: process.env.MOBSF_API_KEY
+});
+
+const client = axios.create({
+  baseURL: env.MOBSF_BASE_URL,
+  headers: { Authorization: env.MOBSF_API_KEY }
+});
+
+const formatAxiosError = (error: AxiosError) => {
+  const status = error.response?.status;
+  const data = error.response?.data;
+  const summary = status ? `HTTP ${status}` : 'Network/unknown error';
+  if (data) return `${summary}: ${JSON.stringify(data)}`;
+  return `${summary}: ${error.message}`;
+};
 
 const server = new Server({ name: 'mobsf-security-suite', version: '1.0.0' }, { capabilities: { tools: {} } });
 
@@ -26,9 +47,7 @@ const tools = [
       if (!await fs.pathExists(args.file_path)) throw new Error(`File not found: ${args.file_path}`);
       const form = new FormData();
       form.append('file', fs.createReadStream(args.file_path), path.basename(args.file_path));
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/upload`, form, {
-        headers: { 'Authorization': MOBSF_API_KEY, ...form.getHeaders() }
-      });
+      const response = await client.post('/api/v1/upload', form, { headers: { ...form.getHeaders() } });
       return response.data;
     }
   },
@@ -44,11 +63,9 @@ const tools = [
       required: ['hash']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/scan`, {
+      const response = await client.post('/api/v1/scan', {
         hash: args.hash,
         scan_type: args.scan_type || 'apk'
-      }, {
-        headers: { 'Authorization': MOBSF_API_KEY }
       });
       return response.data;
     }
@@ -64,9 +81,7 @@ const tools = [
       required: ['hash']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/report_json`, { hash: args.hash }, {
-        headers: { 'Authorization': MOBSF_API_KEY }
-      });
+      const response = await client.post('/api/v1/report_json', { hash: args.hash });
       return response.data;
     }
   },
@@ -82,10 +97,7 @@ const tools = [
       required: ['hash']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/download_pdf`, { hash: args.hash }, {
-        headers: { 'Authorization': MOBSF_API_KEY },
-        responseType: 'stream'
-      });
+      const response = await client.post('/api/v1/download_pdf', { hash: args.hash }, { responseType: 'stream' });
       const outputPath = args.output_path || './mobsf_report.pdf';
       const writer = fs.createWriteStream(outputPath);
       response.data.pipe(writer);
@@ -108,12 +120,10 @@ const tools = [
       required: ['hash', 'file', 'type']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/view_source`, {
+      const response = await client.post('/api/v1/view_source', {
         hash: args.hash,
         file: args.file,
         type: args.type
-      }, {
-        headers: { 'Authorization': MOBSF_API_KEY }
       });
       return response.data;
     }
@@ -130,11 +140,9 @@ const tools = [
       required: ['hash1', 'hash2']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/compare`, {
+      const response = await client.post('/api/v1/compare', {
         hash1: args.hash1,
         hash2: args.hash2
-      }, {
-        headers: { 'Authorization': MOBSF_API_KEY }
       });
       return response.data;
     }
@@ -149,10 +157,7 @@ const tools = [
       }
     },
     handler: async (args: any) => {
-      const response = await axios.get(`${MOBSF_BASE_URL}/api/v1/recent_scans`, {
-        headers: { 'Authorization': MOBSF_API_KEY },
-        params: { page: args.page || 1 }
-      });
+      const response = await client.get('/api/v1/recent_scans', { params: { page: args.page || 1 } });
       return response.data;
     }
   },
@@ -167,9 +172,7 @@ const tools = [
       required: ['hash']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/delete_scan`, { hash: args.hash }, {
-        headers: { 'Authorization': MOBSF_API_KEY }
-      });
+      const response = await client.post('/api/v1/delete_scan', { hash: args.hash });
       return response.data;
     }
   },
@@ -184,9 +187,7 @@ const tools = [
       required: ['hash']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/scorecard`, { hash: args.hash }, {
-        headers: { 'Authorization': MOBSF_API_KEY }
-      });
+      const response = await client.post('/api/v1/scorecard', { hash: args.hash });
       return response.data;
     }
   },
@@ -203,12 +204,10 @@ const tools = [
       required: ['hash', 'finding_id']
     },
     handler: async (args: any) => {
-      const response = await axios.post(`${MOBSF_BASE_URL}/api/v1/suppress_finding`, {
+      const response = await client.post('/api/v1/suppress_finding', {
         hash: args.hash,
         finding_id: args.finding_id,
         reason: args.reason
-      }, {
-        headers: { 'Authorization': MOBSF_API_KEY }
       });
       return response.data;
     }
@@ -235,6 +234,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
     };
   } catch (error: any) {
+    if (error instanceof AxiosError) {
+      return {
+        content: [{ type: 'text', text: `Error executing ${name}: ${formatAxiosError(error)}` }],
+        isError: true
+      };
+    }
+    if (error instanceof z.ZodError) {
+      return {
+        content: [{ type: 'text', text: `Invalid configuration: ${error.errors.map(e => e.message).join(', ')}` }],
+        isError: true
+      };
+    }
     return {
       content: [{ type: 'text', text: `Error executing ${name}: ${error.message}` }],
       isError: true
