@@ -30,6 +30,12 @@ const formatAxiosError = (error: AxiosError) => {
   return `${summary}: ${error.message}`;
 };
 
+const safePick = (obj: any, keys: string[]) =>
+  keys.reduce<Record<string, unknown>>((acc, key) => {
+    if (obj && obj[key] !== undefined) acc[key] = obj[key];
+    return acc;
+  }, {});
+
 type ToolDef = {
   name: string;
   description: string;
@@ -309,6 +315,136 @@ const tools: ToolDef[] = [
         }
       }
       throw new Error(`Timed out waiting for report for hash ${args.hash}`);
+    }
+  },
+  {
+    name: 'get_scan_status',
+    description: 'Check if scan report is ready without downloading the full report',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hash: { type: 'string', description: 'File hash of the analyzed app' }
+      },
+      required: ['hash']
+    },
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required')
+    }),
+    handler: async (args) => {
+      try {
+        const response = await client.post('/api/v1/report_json', { hash: args.hash });
+        const meta = safePick(response.data, [
+          'package_name',
+          'app_name',
+          'version_name',
+          'version_code',
+          'md5',
+          'sha1',
+          'sha256'
+        ]);
+        return { status: 'ready', meta };
+      } catch (err) {
+        const axErr = err as AxiosError;
+        const status = axErr.response?.status;
+        if (status && [400, 404, 425, 429, 503].includes(status)) {
+          return { status: 'pending', message: formatAxiosError(axErr) };
+        }
+        throw err;
+      }
+    }
+  },
+  {
+    name: 'cancel_scan',
+    description: 'Cancel and delete a scan by hash',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hash: { type: 'string', description: 'File hash of scan to cancel/delete' }
+      },
+      required: ['hash']
+    },
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required')
+    }),
+    handler: async (args) => {
+      const response = await client.post('/api/v1/delete_scan', { hash: args.hash });
+      return { status: 'deleted', response: response.data };
+    }
+  },
+  {
+    name: 'list_uploaded_apps',
+    description: 'List recent uploaded apps with hashes and metadata',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        page: { type: 'number', default: 1, description: 'Page number for pagination' }
+      }
+    },
+    schema: z.object({
+      page: z.number().int().positive().optional()
+    }),
+    handler: async (args) => {
+      const response = await client.get('/api/v1/recent_scans', { params: { page: args.page || 1 } });
+      return response.data;
+    }
+  },
+  {
+    name: 'get_scan_metadata',
+    description: 'Return basic metadata for a scan (hashes, package, version, file info)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hash: { type: 'string', description: 'File hash of the analyzed app' }
+      },
+      required: ['hash']
+    },
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required')
+    }),
+    handler: async (args) => {
+      const response = await client.post('/api/v1/report_json', { hash: args.hash });
+      const meta = safePick(response.data, [
+        'file_name',
+        'size',
+        'scan_type',
+        'md5',
+        'sha1',
+        'sha256',
+        'package_name',
+        'app_name',
+        'version_name',
+        'version_code',
+        'sdk_version',
+        'target_sdk_version'
+      ]);
+      return meta;
+    }
+  },
+  {
+    name: 'get_scan_artifacts',
+    description: 'Return key report sections (manifest, permissions, binaries, malware checks, entitlements)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hash: { type: 'string', description: 'File hash of the analyzed app' },
+        sections: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Report sections to include',
+          default: ['manifest_analysis', 'permissions', 'binaries', 'malware', 'entitlements', 'files']
+        }
+      },
+      required: ['hash']
+    },
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required'),
+      sections: z.array(z.string()).optional()
+    }),
+    handler: async (args) => {
+      const response = await client.post('/api/v1/report_json', { hash: args.hash });
+      const sections = args.sections || ['manifest_analysis', 'permissions', 'binaries', 'malware', 'entitlements', 'files'];
+      const data = safePick(response.data, sections);
+      return data;
     }
   }
 ];
