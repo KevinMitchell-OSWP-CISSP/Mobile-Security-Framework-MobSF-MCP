@@ -30,9 +30,17 @@ const formatAxiosError = (error: AxiosError) => {
   return `${summary}: ${error.message}`;
 };
 
+type ToolDef = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  schema: z.ZodTypeAny;
+  handler: (args: any) => Promise<any>;
+};
+
 const server = new Server({ name: 'mobsf-security-suite', version: '1.0.0' }, { capabilities: { tools: {} } });
 
-const tools = [
+const tools: ToolDef[] = [
   {
     name: 'upload_mobile_app',
     description: 'Upload mobile app (APK/IPA/ZIP) for security analysis',
@@ -43,7 +51,10 @@ const tools = [
       },
       required: ['file_path']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      file_path: z.string().min(1, 'file_path is required')
+    }),
+    handler: async (args) => {
       if (!await fs.pathExists(args.file_path)) throw new Error(`File not found: ${args.file_path}`);
       const form = new FormData();
       form.append('file', fs.createReadStream(args.file_path), path.basename(args.file_path));
@@ -62,7 +73,11 @@ const tools = [
       },
       required: ['hash']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required'),
+      scan_type: z.enum(['apk', 'ipa', 'zip']).optional()
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/scan', {
         hash: args.hash,
         scan_type: args.scan_type || 'apk'
@@ -80,7 +95,10 @@ const tools = [
       },
       required: ['hash']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required')
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/report_json', { hash: args.hash });
       return response.data;
     }
@@ -96,7 +114,11 @@ const tools = [
       },
       required: ['hash']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required'),
+      output_path: z.string().min(1).optional()
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/download_pdf', { hash: args.hash }, { responseType: 'stream' });
       const outputPath = args.output_path || './mobsf_report.pdf';
       const writer = fs.createWriteStream(outputPath);
@@ -119,7 +141,12 @@ const tools = [
       },
       required: ['hash', 'file', 'type']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required'),
+      file: z.string().min(1, 'file is required'),
+      type: z.enum(['apk', 'ipa', 'zip'])
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/view_source', {
         hash: args.hash,
         file: args.file,
@@ -139,7 +166,11 @@ const tools = [
       },
       required: ['hash1', 'hash2']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash1: z.string().min(1, 'hash1 is required'),
+      hash2: z.string().min(1, 'hash2 is required')
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/compare', {
         hash1: args.hash1,
         hash2: args.hash2
@@ -156,7 +187,10 @@ const tools = [
         page: { type: 'number', default: 1, description: 'Page number for pagination' }
       }
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      page: z.number().int().positive().optional()
+    }),
+    handler: async (args) => {
       const response = await client.get('/api/v1/recent_scans', { params: { page: args.page || 1 } });
       return response.data;
     }
@@ -171,7 +205,10 @@ const tools = [
       },
       required: ['hash']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required')
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/delete_scan', { hash: args.hash });
       return response.data;
     }
@@ -186,7 +223,10 @@ const tools = [
       },
       required: ['hash']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required')
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/scorecard', { hash: args.hash });
       return response.data;
     }
@@ -203,13 +243,72 @@ const tools = [
       },
       required: ['hash', 'finding_id']
     },
-    handler: async (args: any) => {
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required'),
+      finding_id: z.string().min(1, 'finding_id is required'),
+      reason: z.string().optional()
+    }),
+    handler: async (args) => {
       const response = await client.post('/api/v1/suppress_finding', {
         hash: args.hash,
         finding_id: args.finding_id,
         reason: args.reason
       });
       return response.data;
+    }
+  },
+  {
+    name: 'health_check',
+    description: 'Verify MobSF API connectivity and API key',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    },
+    schema: z.object({}),
+    handler: async () => {
+      const response = await client.get('/api/v1/recent_scans', { params: { page: 1 } });
+      const recentCount = Array.isArray(response.data) ? response.data.length : undefined;
+      return { status: 'ok', recent_scans_count: recentCount };
+    }
+  },
+  {
+    name: 'wait_for_report',
+    description: 'Poll until scan report is ready or timeout',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hash: { type: 'string', description: 'File hash of the analyzed app' },
+        interval_ms: { type: 'number', description: 'Polling interval in milliseconds', default: 3000 },
+        timeout_ms: { type: 'number', description: 'Timeout in milliseconds', default: 60000 }
+      },
+      required: ['hash']
+    },
+    schema: z.object({
+      hash: z.string().min(1, 'hash is required'),
+      interval_ms: z.number().int().positive().optional().default(3000),
+      timeout_ms: z.number().int().positive().optional().default(60000)
+    }),
+    handler: async (args) => {
+      const start = Date.now();
+      const interval = args.interval_ms ?? 3000;
+      const timeout = args.timeout_ms ?? 60000;
+
+      /* Poll report_json until it succeeds or times out. */
+      while (Date.now() - start < timeout) {
+        try {
+          const response = await client.post('/api/v1/report_json', { hash: args.hash });
+          return { status: 'ready', report: response.data };
+        } catch (err) {
+          const axErr = err as AxiosError;
+          const status = axErr.response?.status;
+          if (status && [400, 404, 425, 429, 503].includes(status)) {
+            await new Promise(res => setTimeout(res, interval));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw new Error(`Timed out waiting for report for hash ${args.hash}`);
     }
   }
 ];
@@ -229,7 +328,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const tool = tools.find(t => t.name === name);
   if (!tool) throw new Error(`Unknown tool: ${name}`);
   try {
-    const result = await tool.handler(args || {});
+    const parsedArgs = tool.schema ? tool.schema.parse(args || {}) : args || {};
+    const result = await tool.handler(parsedArgs);
     return {
       content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
     };
