@@ -36,6 +36,25 @@ const safePick = (obj: any, keys: string[]) =>
     return acc;
   }, {});
 
+const waitForReport = async (hash: string, interval: number, timeout: number) => {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    try {
+      const response = await client.post('/api/v1/report_json', { hash });
+      return response.data;
+    } catch (err) {
+      const axErr = err as AxiosError;
+      const status = axErr.response?.status;
+      if (status && [400, 404, 425, 429, 503].includes(status)) {
+        await new Promise(res => setTimeout(res, interval));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error(`Timed out waiting for report for hash ${hash}`);
+};
+
 type ToolDef = {
   name: string;
   description: string;
@@ -295,26 +314,8 @@ const tools: ToolDef[] = [
       timeout_ms: z.number().int().positive().optional().default(60000)
     }),
     handler: async (args) => {
-      const start = Date.now();
-      const interval = args.interval_ms ?? 3000;
-      const timeout = args.timeout_ms ?? 60000;
-
-      /* Poll report_json until it succeeds or times out. */
-      while (Date.now() - start < timeout) {
-        try {
-          const response = await client.post('/api/v1/report_json', { hash: args.hash });
-          return { status: 'ready', report: response.data };
-        } catch (err) {
-          const axErr = err as AxiosError;
-          const status = axErr.response?.status;
-          if (status && [400, 404, 425, 429, 503].includes(status)) {
-            await new Promise(res => setTimeout(res, interval));
-            continue;
-          }
-          throw err;
-        }
-      }
-      throw new Error(`Timed out waiting for report for hash ${args.hash}`);
+      const report = await waitForReport(args.hash, args.interval_ms ?? 3000, args.timeout_ms ?? 60000);
+      return { status: 'ready', report };
     }
   },
   {
@@ -445,6 +446,91 @@ const tools: ToolDef[] = [
       const sections = args.sections || ['manifest_analysis', 'permissions', 'binaries', 'malware', 'entitlements', 'files'];
       const data = safePick(response.data, sections);
       return data;
+    }
+  },
+  {
+    name: 'pipeline_scan',
+    description: 'Upload, scan, wait for completion, and return metadata and selected artifacts',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: 'Path to APK/IPA/ZIP file to upload' },
+        scan_type: { type: 'string', enum: ['apk', 'ipa', 'zip'], default: 'apk', description: 'Type of app' },
+        interval_ms: { type: 'number', description: 'Polling interval in milliseconds', default: 3000 },
+        timeout_ms: { type: 'number', description: 'Timeout in milliseconds', default: 60000 },
+        sections: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Report sections to include',
+          default: ['manifest_analysis', 'permissions', 'binaries', 'malware', 'entitlements', 'files']
+        },
+        save_pdf: { type: 'boolean', description: 'Whether to download the PDF report', default: false },
+        pdf_path: { type: 'string', description: 'Path to save PDF if save_pdf is true', default: './mobsf_report.pdf' }
+      },
+      required: ['file_path']
+    },
+    schema: z.object({
+      file_path: z.string().min(1, 'file_path is required'),
+      scan_type: z.enum(['apk', 'ipa', 'zip']).optional(),
+      interval_ms: z.number().int().positive().optional().default(3000),
+      timeout_ms: z.number().int().positive().optional().default(60000),
+      sections: z.array(z.string()).optional(),
+      save_pdf: z.boolean().optional().default(false),
+      pdf_path: z.string().min(1).optional()
+    }),
+    handler: async (args) => {
+      if (!await fs.pathExists(args.file_path)) throw new Error(`File not found: ${args.file_path}`);
+
+      // Upload
+      const form = new FormData();
+      form.append('file', fs.createReadStream(args.file_path), path.basename(args.file_path));
+      const uploadResp = await client.post('/api/v1/upload', form, { headers: { ...form.getHeaders() } });
+      const hash = (uploadResp.data as any)?.hash;
+      if (!hash) throw new Error('Upload did not return a hash');
+
+      // Scan
+      await client.post('/api/v1/scan', { hash, scan_type: args.scan_type || 'apk' });
+
+      // Wait for completion
+      const report = await waitForReport(hash, args.interval_ms ?? 3000, args.timeout_ms ?? 60000);
+      const sections = args.sections || ['manifest_analysis', 'permissions', 'binaries', 'malware', 'entitlements', 'files'];
+
+      const meta = safePick(report, [
+        'file_name',
+        'size',
+        'scan_type',
+        'md5',
+        'sha1',
+        'sha256',
+        'package_name',
+        'app_name',
+        'version_name',
+        'version_code',
+        'sdk_version',
+        'target_sdk_version'
+      ]);
+      const artifacts = safePick(report, sections);
+
+      let pdf_saved;
+      if (args.save_pdf) {
+        const outputPath = args.pdf_path || './mobsf_report.pdf';
+        const pdfResp = await client.post('/api/v1/download_pdf', { hash }, { responseType: 'stream' });
+        const writer = fs.createWriteStream(outputPath);
+        pdfResp.data.pipe(writer);
+        await new Promise((resolve, reject) => {
+          writer.on('finish', () => resolve(undefined));
+          writer.on('error', reject);
+        });
+        pdf_saved = outputPath;
+      }
+
+      return {
+        status: 'ready',
+        hash,
+        metadata: meta,
+        artifacts,
+        pdf_saved
+      };
     }
   }
 ];

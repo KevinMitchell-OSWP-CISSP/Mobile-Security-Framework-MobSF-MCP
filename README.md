@@ -46,6 +46,7 @@ MOBSF_API_KEY=your_api_key_here MOBSF_BASE_URL=http://127.0.0.1:8000 npm run dev
   - `list_uploaded_apps` (recent uploads)
   - `get_scan_metadata` (hashes/package/version info)
   - `get_scan_artifacts` (manifest/permissions/binaries/malware/entitlements)
+  - `pipeline_scan` (upload → scan → wait → return metadata/artifacts, optional PDF)
   - `health_check` (connectivity/API key sanity)
   - `view_source_code`
   - `compare_apps`
