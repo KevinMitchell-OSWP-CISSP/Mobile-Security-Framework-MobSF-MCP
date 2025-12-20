@@ -57,7 +57,7 @@ Open http://127.0.0.1:8000, get the API key from Settings, and use it in `MOBSF_
 ## Using with MCP Clients (Claude/OpenAI)
 - Ensure the server is running with correct env vars.
 - Configure your MCP client to launch:  
-  `bash -c "cd /home/mcp_mvp/mobsf-mcp-server && MOBSF_API_KEY=... MOBSF_BASE_URL=http://127.0.0.1:8000 node dist/server.js"`
+  `bash -c "cd /home/ && MOBSF_API_KEY=... MOBSF_BASE_URL=http://127.0.0.1:8000 node dist/server.js"`
 - In chat, call tools with JSON args (example):  
   `pipeline_scan` → `{"file_path":"/abs/path/app.apk","scan_type":"apk","timeout_ms":90000,"save_pdf":true}`
 
