@@ -61,7 +61,4 @@ Open http://127.0.0.1:8000, get the API key from Settings, and use it in `MOBSF_
 - In chat, call tools with JSON args (example):  
   `pipeline_scan` → `{"file_path":"/abs/path/app.apk","scan_type":"apk","timeout_ms":90000,"save_pdf":true}`
 
-## Notes
-- Keep this repository private; do not commit `.env` or secrets.
-- `dist/` and `node_modules/` are generated and ignored.
-- Error handling: startup validates env; MobSF HTTP errors are returned with details for easier troubleshooting in chat UIs.
+
